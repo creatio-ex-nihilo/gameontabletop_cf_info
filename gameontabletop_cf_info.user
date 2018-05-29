@@ -1,0 +1,440 @@
+// ==UserScript==
+// @name         gameontabletop_cf_info
+// @namespace    http://tampermonkey.net/
+// @version      0.1.9
+// @description  provides a userscript for gameontabletop.com, which shows you additional information (and yes, I know some things are badly done, but it is a userscript, so some workarounds were required)
+// @author       https://github.com/creatio-ex-nihilo
+// @match        https://www.gameontabletop.com/*
+// @grant        none
+// ==/UserScript==
+
+(function() {
+  'use strict';
+
+  // globals
+  var linkTarget = null;
+  var crowdNr = null;
+  var ls_name = null;
+  var ls_name_backer = null;
+  var ls_name_div = null;
+  var reloadBackers = 1;
+  var output_id = "cf-output-id";
+  var link_id = "goal-link-id";
+  var pattern = new RegExp("[0-9 ]+");
+
+  // append css style tag
+  var css = "@import url('https://fonts.googleapis.com/css?family=Inconsolata');#goalLink:hover{ text-decoration: underline; cursor: pointer; }";
+  var style = document.createElement('style');
+
+  if (style.styleSheet) {
+    style.styleSheet.cssText = css;
+  } else {
+    style.appendChild(document.createTextNode(css));
+  }
+  document.getElementsByTagName('head')[0].appendChild(style);
+
+  /*
+  // click listener for tabs
+  var tabs = document.getElementsByClassName("onglet_main");
+  var currentTabText = null;
+  for(var e = 0; e < tabs.length; e++){
+  	tabs[e].addEventListener("click", function(event){
+  		var li = document.getElementById(link_id).style.display;
+  		if(event.target.innerText == "Home" && currentTabText !== "Home"){
+  			li = "block";
+  		}else{
+  			li = "none";
+  		}
+  		currentTabText = event.target.innerText;
+  	});
+  }
+  */
+
+  // key listener for . to top
+  window.onkeyup = function(e) {
+    var key = e.keyCode ? e.keyCode : e.which;
+    if (key == 190) {
+      document.body.scrollTop = 0;
+    }
+  };
+
+  // taken from https://stackoverflow.com/questions/901115/how-can-i-get-query-string-values-in-javascript
+  function getParameterByName(name, url) {
+    if (!url) {
+      url = window.location.href;
+    }
+    name = name.replace(/[\[\]]/g, "\\$&");
+    var regex = new RegExp("[?&]" + name + "(=([^&#]*)|&|#|$)"),
+      results = regex.exec(url);
+    if (!results) {
+      return null;
+    }
+    if (!results[2]) {
+      return '';
+    }
+    return decodeURIComponent(results[2].replace(/\+/g, " "));
+  }
+
+  // append leading zero
+  function pad(n, size) {
+    n = n.toString();
+    while (n.length < size) {
+      n = "0" + n;
+    }
+    return n;
+  }
+
+  // create date format
+  function dateFormat(d) {
+    return pad(d.getUTCDate(), 2) + "/" + pad(parseInt(d.getMonth() + 1), 2) + "/" + d.getFullYear() + " " + pad(d.getHours(), 2) + ":" + pad(d.getMinutes(), 2);
+  }
+
+  function createAdditionalInformation() {
+    // get id from breadcrumbs
+    var id = document.getElementById("chemin_de_fer").getElementsByTagName("li")[3].innerHTML.split("crowdfunding-")[1].split(".html")[0];
+    if (id !== null || id !== undefined) {
+      crowdNr = Number(id);
+    }
+
+    // value objects
+    var divLocations = null;
+    var locations = null;
+    var ls_values = {
+      "average": null,
+      "backer": null,
+      "cash": null,
+      "date": null
+    };
+    var values = {
+      "average": null,
+      "backer": null,
+      "cash": null,
+      "date": null
+    };
+
+    if (crowdNr !== null) {
+      ls_name = "cf-" + crowdNr;
+      ls_name_backer = ls_name + "-backer";
+      ls_name_div = ls_name + "-div";
+
+      // load object from localStorage
+      if (localStorage.getItem(ls_name) === null || localStorage.getItem(ls_name) === undefined) {
+        console.error("couldn't load item " + ls_name + " from localStorage");
+      } else {
+        ls_values = JSON.parse(localStorage.getItem(ls_name));
+      }
+
+      if (localStorage.getItem(ls_name_backer) === null || localStorage.getItem(ls_name_backer) === undefined) {
+        console.error("couldn't load item " + ls_name_backer + " from localStorage");
+      } else {
+        locations = JSON.parse(localStorage.getItem(ls_name_backer));
+      }
+
+      if (localStorage.getItem(ls_name_div) === null || localStorage.getItem(ls_name_div) === undefined) {
+        console.error("couldn't load item " + ls_name_backer + " from localStorage");
+      } else {
+        divLocations = JSON.parse(localStorage.getItem(ls_name_div));
+      }
+    }
+
+    // get count of backer sites
+    // theoretically, you could just div #backers/30 and have your side count, but that's unsave
+    var backerSiteCount = null;
+    var actualBackers = null;
+    var x = document.getElementsByClassName("selecteur_page");
+    for (var s = 0; s < x.length; s++) {
+      if (x[s].parentNode.id == "tab_backers") {
+        actualBackers = Number(pattern.exec(x[s].parentNode.firstChild.innerText));
+        var links = x[s].getElementsByTagName("td");
+        backerSiteCount = Number(getParameterByName("nop", links[links.length - 1].firstChild.href)) + 1;
+      }
+    }
+
+    if (actualBackers !== null && locations !== null) {
+      var calcBackers = null;
+      for (var loc in locations) {
+        calcBackers += locations[loc].count;
+      }
+      if (calcBackers == actualBackers && divLocations !== null) {
+        reloadBackers = 0;
+      }
+    }
+
+    // only load backer info if crowdNr is known
+    if (crowdNr !== null && backerSiteCount !== null && reloadBackers == 1) {
+      var info = [];
+      info.push(backerSiteCount);
+      info.push(crowdNr);
+
+      myWorker.postMessage(info);
+    }
+
+    // get next goal from document
+    var nextGoal;
+    if (document.getElementById("main_goal_liste") !== null && document.getElementById("tab_accueil") !== null && document.getElementById("tab_accueil").classList.contains("active")) {
+      linkTarget = document.getElementById("main_goal_liste").getElementsByClassName("unlocked");
+      if (linkTarget.length !== 0 && linkTarget[linkTarget.length-1].parentNode.getElementsByTagName("h3").length !== 0) {
+        linkTarget = linkTarget[linkTarget.length-1].parentNode;
+        nextGoal = linkTarget.getElementsByTagName("h3")[0].innerHTML.split("<")[0];
+      } else {
+        linkTarget = null;
+        nextGoal = null;
+      }
+    }
+    // get backers from document
+    var input = document.getElementById("ks_marketing");
+    var p = input.innerHTML.split("<div")[0];
+    if (actualBackers !== null) {
+      values.backer = actualBackers;
+    } else {
+      values.backer = Number(pattern.exec(p));
+    }
+    // get cash from document (split+join is faster than replace with regex)
+    values.cash = Number(pattern.exec(p.split("<br>")[1])[0].split(' ').join(''));
+
+    // calc average
+    values.average = (values.cash / values.backer).toFixed(2);
+    // calc difference cash
+    var differenceCash = values.cash - ls_values.cash;
+    if (differenceCash < 0) {
+      differenceCash = 0;
+    }
+    // calc difference backer
+    var differenceBacker = values.backer - ls_values.backer;
+    if (differenceBacker < 0) {
+      differenceBacker = 0;
+    }
+    // calc time
+    values.date = dateFormat(new Date());
+
+    // create output div
+    var output = document.createElement("div");
+    //output.style.border = "1px dashed orange";
+    output.style.textAlign = "center";
+    output.style.margin = "5px 0px 8px 0px";
+
+    // create average div
+    var divAverage = document.createElement("div");
+    divAverage.style.margin = "-10px 0px 5px 0px";
+    var divNextGoalWrapper = divAverage.cloneNode(true);
+    divNextGoalWrapper.id = link_id;
+    divAverage.style.padding = "0px 0px 5px 0px";
+    divAverage.style.height = "30px";
+    // clone addtional divs from average
+    var divDifferenceCash = divAverage.cloneNode(true);
+    var divDifferenceBacker = divAverage.cloneNode(true);
+    var divTime = divAverage.cloneNode(true);
+
+    var divNextGoalHeader = divAverage.cloneNode(true);
+    var divNextGoal = divNextGoalHeader.cloneNode(true);
+    divNextGoal.style.color = "orange";
+    divNextGoal.style.overflow = "hidden";
+    divNextGoal.style.textOverflow = "ellipsis";
+
+    // finalise divAverage
+    divAverage.innerHTML = "<small>and average @ <big style=\"color: orange\">" + values.average + "€</big> per Backer</small>";
+
+    // finalise divDifferenceBacker
+    divDifferenceBacker.innerHTML = "<small>we gained <big style=\"color: orange\">" + differenceCash + "€</big> & <big style=\"color: orange\">" + differenceBacker + "</big> additional Backer(s)</small>";
+
+    // finalise divDifferenceCash + time
+    divDifferenceCash.innerHTML = "<small>since <big style=\"color: orange\">(" + ls_values.date + ")</big></small>";
+
+    // finalise divTime
+    divTime.innerHTML = "<small>@ <big style=\"color: orange\">(" + values.date + ")</big></small>";
+
+    // finalise divNextGoalHeader
+    divNextGoalHeader.innerHTML = "<small>last reached goal:</small>";
+
+    // finalise divNextGoal
+	  // title=\"jump to next goal\"
+    divNextGoal.innerHTML = "<small id=\"goalLink\">" + nextGoal + "</small>";
+
+    // append divs to output div
+    if (ls_values.cash === null && crowdNr === null) {
+      output.innerHTML = "no id fetchable from url";
+    } else if (ls_values.cash === null) {
+      output.innerHTML = "no previous refresh found";
+    } else {
+      output.appendChild(divDifferenceCash);
+      output.appendChild(divDifferenceBacker);
+      output.appendChild(divAverage);
+      output.appendChild(divTime);
+      if (linkTarget !== null && crowdNr !== null) {
+        divNextGoalWrapper.appendChild(divNextGoalHeader);
+        divNextGoalWrapper.appendChild(divNextGoal);
+        output.appendChild(divNextGoalWrapper);
+      }
+      if (reloadBackers === 0) {
+        var l = document.createElement("div");
+        l.innerHTML = divLocations;
+        output.appendChild(l);
+      }
+    }
+
+    // save values to localStorage
+    localStorage.setItem(ls_name, JSON.stringify(values));
+
+	output.className = "main_goal";
+    return output;
+  }
+
+  // create worker
+  var myWorker = null,
+    URL = window.URL || (window.webkitURL);
+
+  window.URL = URL;
+
+  myWorker = function() {
+    onmessage = function(e) {
+      var inputContainer = [{}];
+      var locations = inputContainer[0];
+      var outputContainer = [];
+      var len = Number(e.data[0]);
+      var crowdNr = Number(e.data[1]);
+      var xmlHttp = new XMLHttpRequest();
+      //var regPattern = new RegExp("</b></td><td class=\"aH\">[^<]*</td><td>");
+      var regPattern = new RegExp("</b></td><td>");
+
+      // append leading zero
+      function pad(n, size) {
+        n = n.toString();
+        while (n.length < size) {
+          n = "0" + n;
+        }
+        return n;
+      }
+
+      function getCountryCountFromList(list) {
+        // because a worker doesn't have access to the DOM, you have to split through this ... input
+        var tmp = list.split("<table class=\"table table-striped\">")[1];
+        var text = "<div><table>" + tmp.split("<div class=\"tab-pane\" id=\"tab_commentaires\">")[0];
+        var a = text.split(regPattern);
+        for (var i = 1; i < a.length; i++) {
+          var loc = a[i].split("</td>")[0];
+          if (loc in locations) {
+            // country++
+            locations[loc].count++;
+          } else {
+            locations[loc] = {
+              "count": 1,
+              "percentage": null
+            };
+          }
+        }
+      }
+
+      xmlHttp.onreadystatechange = function() {
+        if (xmlHttp.readyState == XMLHttpRequest.DONE) {
+          if (xmlHttp.status == 200) {
+            getCountryCountFromList(xmlHttp.responseText);
+          } else if (xmlHttp.status == 400) {
+            console.error("Code 400");
+          } else {
+            console.error("^Code (400 || 200)");
+          }
+        }
+      };
+
+      for (var k = 0; k < len; k++) {
+        xmlHttp.open("GET", "https://www.gameontabletop.com/crowdfunding.php?id=" + crowdNr + "&onglet=3&nop=" + k, false);
+        xmlHttp.send();
+      }
+
+      // backer value from createAdditionalInformation() is unreliable, because if someone ordered something but didn't pay yet,
+	  // they are NOT listed as a backer, but the counter is increased
+      var countBacker = 0;
+      var perCount = 0;
+      var size = 0;
+
+      for (var key in locations) {
+        countBacker += (locations[key].count);
+      }
+
+      var tmpDump;
+      for (var key in locations) {
+        locations[key].percentage = ((locations[key].count / countBacker) * 100).toFixed(2);
+        perCount += Number(locations[key].percentage);
+        tmpDump = locations[key].count.toString().length;
+        if (tmpDump > size) {
+          size = tmpDump;
+        }
+      }
+      perCount = perCount.toFixed(2);
+	  console.log(locations);
+
+      // create HTML-table with values
+      var table = "<table style=\"font-family: 'Inconsolata', monospace; padding: 0px 0px 5px 0px;margin: 10px 0px 5px 0px; width: 100%; border-top: 1px solid black; border-bottom: 1px solid black\"><tr style=\"color: orange; border-bottom: 1px solid black\">";
+      table += "<td>Country</td><td style=\"border-left: 1px solid black; border-right: 1px solid black\">#</td><td>%<span style=\"color: lightgray; font-style:italic;\">*</span></td></tr>";
+      for (var loc in locations) {
+        var t = "<tr><td>" + loc + "</td><td style=\"border-left: 1px solid black; border-right: 1px solid black\">" + pad(locations[loc].count, size) + "</td><td>" + pad(locations[loc].percentage, 6) + "</td></tr>";
+        table += t;
+      }
+      table += "<tr style=\"border-top: 1px solid black\"><td>sum</td><td style=\"border-left: 1px solid black; border-right: 1px solid black\">" + countBacker + "</td><td>" + perCount + "</td></tr>";
+      table += "</table>";
+      table += "<span style=\"color: lightgray; font-style:italic;\">* rounding errors may occur</span>";
+
+      outputContainer.push(locations);
+      outputContainer.push(table);
+      postMessage(outputContainer);
+    };
+  };
+
+  // create blob for worker
+  var workerData = new Blob(["(" + myWorker.toString() + ")()"], {
+    type: "text/javascript"
+  });
+
+  function init() {
+    if (document.getElementById("ks_marketing") !== null && (document.getElementById(output_id) === null || document.getElementById(output_id) === undefined)) {
+      if (typeof(Worker) === undefined) {
+        alert("No webworker supported");
+        return false;
+      } else {
+        myWorker = new Worker(window.URL.createObjectURL(workerData));
+      }
+
+      // create additional information
+      var output = createAdditionalInformation();
+      output.id = output_id;
+      document.getElementById("ks_marketing").childNodes[4].appendChild(output);
+
+      // append loading
+      if (crowdNr !== null && reloadBackers == 1) {
+        var load = document.createElement("div");
+        load.id = "tmp_load_id";
+        load.style.padding = "0px 0px 5px 0px";
+        load.style.margin = "10px 0px 5px 0px";
+        load.innerText = "loading backer information ...";
+        output.appendChild(load);
+      }
+
+      // add click handler to jump to next goal
+      if (linkTarget !== null && document.getElementById("goalLink") !== null) {
+        document.getElementById("goalLink").addEventListener('click', function() {
+          linkTarget.scrollIntoView();
+        });
+      }
+
+      myWorker.onmessage = function(e) {
+        if (ls_name_backer !== null && ls_name_div !== null) {
+          localStorage.setItem(ls_name_backer, JSON.stringify(e.data[0]));
+          localStorage.setItem(ls_name_div, JSON.stringify(e.data[1]));
+        }
+        // append table from worker
+        var backerTable = document.createElement("div");
+        backerTable.innerHTML = e.data[1];
+        // remove loading
+        if (crowdNr !== null) {
+          var node = document.getElementById(load.id);
+          node.parentNode.removeChild(node);
+        }
+        output.appendChild(backerTable);
+      };
+    } else {
+      return;
+    }
+  }
+
+  init();
+})();
